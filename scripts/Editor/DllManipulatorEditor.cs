@@ -37,7 +37,8 @@ namespace UnityNativeTool.Internal
         private static readonly GUIContent DLL_LOADING_MODE_GUI_CONTENT = new GUIContent("DLL loading mode", 
             "Specifies how DLLs and functions will be loaded.\n\n" +
             "Lazy - All DLLs and functions are loaded each time they are called, if not loaded yet. This allows them to be easily unloaded and loaded within game execution.\n\n" +
-            "Preloaded - Slight performance benefit over Lazy mode. All declared DLLs and functions are loaded at startup (OnEnable()) and not reloaded later. Mid-execution it's not safe to unload them unless game is paused.");
+            "Preloaded - Slight performance benefit over Lazy mode. All declared DLLs and functions are loaded at startup (OnEnable()) and not reloaded later. Mid-execution it's not safe to unload them unless game is paused.\n\n" +
+            "Preloaded (Warn unresolved) - The same as Preloaded but will not fail if some symbols are not resolved.");
         private static readonly GUIContent POSIX_DLOPEN_FLAGS_GUI_CONTENT = new GUIContent("dlopen flags",
             "Flags used in dlopen() P/Invoke on Linux and OSX systems. Has minor meaning unless library is large.");
         private static readonly GUIContent THREAD_SAFE_GUI_CONTENT = new GUIContent("Thread safe",
@@ -136,7 +137,7 @@ namespace UnityNativeTool.Internal
             // Allow Reinitializing DllManipulator if there are changes
             if (DllManipulator.Options != null && !t.Options.Equals(DllManipulator.Options))
             {
-                if (DllManipulator.Options.loadingMode == DllLoadingMode.Preload)
+                if (DllManipulator.Options.loadingMode == DllLoadingMode.Preload || DllManipulator.Options.loadingMode == DllLoadingMode.PreloadWarnUnresolved)
                 {
                     if (GUILayout.Button(REINITIALIZE_WITH_CHANGES_PRELOADED_GUI_CONTENT))
                         t.Reinitialize();
@@ -168,7 +169,7 @@ namespace UnityNativeTool.Internal
             var usedDlls = DllManipulator.GetUsedDllsInfos();
             if (usedDlls.Count != 0)
             {
-                if(DllManipulator.Options.loadingMode == DllLoadingMode.Preload && usedDlls.Any(d => !d.isLoaded))
+                if((DllManipulator.Options.loadingMode == DllLoadingMode.Preload || DllManipulator.Options.loadingMode == DllLoadingMode.PreloadWarnUnresolved) && usedDlls.Any(d => !d.isLoaded))
                 {
                     if (EditorApplication.isPaused)
                     {
@@ -204,7 +205,7 @@ namespace UnityNativeTool.Internal
                     bool unloadAll;
                     if(DllManipulator.Options.threadSafe)
                         unloadAll = GUILayout.Button(UNLOAD_ALL_DLLS_WITH_THREAD_SAFETY_GUI_CONTENT);
-                    else if (DllManipulator.Options.loadingMode == DllLoadingMode.Preload && (EditorApplication.isPlaying && !EditorApplication.isPaused || DllManipulator.Options.enableInEditMode))
+                    else if ((DllManipulator.Options.loadingMode == DllLoadingMode.Preload || DllManipulator.Options.loadingMode == DllLoadingMode.PreloadWarnUnresolved) && (EditorApplication.isPlaying && !EditorApplication.isPaused || DllManipulator.Options.enableInEditMode))
                         unloadAll = GUILayout.Button(UNLOAD_ALL_DLLS_IN_PLAY_PRELOADED_GUI_CONTENT);
                     else
                         unloadAll = GUILayout.Button("Unload all DLLs");
@@ -331,7 +332,7 @@ namespace UnityNativeTool.Internal
 #endif
 
             var guiEnabled = GUI.enabled;
-            if (options.loadingMode != DllLoadingMode.Preload)
+            if (options.loadingMode != DllLoadingMode.Preload && options.loadingMode != DllLoadingMode.PreloadWarnUnresolved)
             {
                 options.threadSafe = false;
                 GUI.enabled = false;

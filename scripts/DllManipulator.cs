@@ -113,8 +113,8 @@ namespace UnityNativeTool.Internal
                 }
             }
 
-            if (Options.loadingMode == DllLoadingMode.Preload)
-                LoadAll();
+            if (Options.loadingMode == DllLoadingMode.Preload || Options.loadingMode == DllLoadingMode.PreloadWarnUnresolved)
+                LoadAll(Options.loadingMode == DllLoadingMode.PreloadWarnUnresolved);
         }
 
         /// <summary>
@@ -153,7 +153,7 @@ namespace UnityNativeTool.Internal
         /// <summary>
         /// Loads all DLLs and functions for mocked methods
         /// </summary>
-        public static void LoadAll()
+        public static void LoadAll(bool warnOnError = false)
         {
             _nativeFunctionLoadLock.EnterWriteLock(); //Locking with no thread safety option is not required but is ok (this function isn't performance critical)
             try 
@@ -164,12 +164,26 @@ namespace UnityNativeTool.Internal
                     {
                         foreach (var nativeFunction in dll.functions)
                         {
-                            LoadTargetFunction(nativeFunction, false);
+                            LoadTargetFunctionResult result = LoadTargetFunction(nativeFunction, warnOnError);
+                            if (warnOnError && result != LoadTargetFunctionResult.Success)
+                            {
+                                switch (result)
+                                {
+                                    case LoadTargetFunctionResult.DllLoadFailed:
+                                        Debug.LogWarning($"Failed to load dll \"{dll.path}\" for symbol \"{nativeFunction.identity.symbol}\"");
+                                        break;
+                                    case LoadTargetFunctionResult.SymbolResolutionFailed:
+                                        Debug.LogWarning($"Failed to locate symbol \"{nativeFunction.identity.symbol}\" in dll \"{dll.path}\"");
+                                        break;
+                                    default:
+                                        throw new ArgumentOutOfRangeException();
+                                }
+                            }
                         }
                         
                         // Notify that the dll and its functions have been loaded in preload mode
                         // This here allows use of native functions in the triggers
-                        if(Options.loadingMode == DllLoadingMode.Preload)
+                        if(Options.loadingMode == DllLoadingMode.Preload || Options.loadingMode == DllLoadingMode.PreloadWarnUnresolved)
                             InvokeCustomTriggers(_customLoadedTriggers, dll);
                     }
                 }
@@ -504,11 +518,21 @@ namespace UnityNativeTool.Internal
         }
 
         /// <summary>
+        /// Denotes the result of LoadTargetFunction
+        /// </summary>
+        internal enum LoadTargetFunctionResult
+        {
+            Success,
+            DllLoadFailed,
+            SymbolResolutionFailed,
+        }
+
+        /// <summary>
         /// Loads DLL and function delegate of <paramref name="nativeFunction"/> if not yet loaded.
         /// To achieve thread safety calls to this method must be synchronized.
         /// Note: This method is being called by dynamically generated code. Be careful when changing its signature.
         /// </summary>
-        internal static void LoadTargetFunction(NativeFunction nativeFunction, bool ignoreLoadError)
+        internal static LoadTargetFunctionResult LoadTargetFunction(NativeFunction nativeFunction, bool ignoreLoadError)
         {
             var dll = nativeFunction.containingDll;
             if (dll.handle == IntPtr.Zero)
@@ -525,7 +549,7 @@ namespace UnityNativeTool.Internal
                         throw new NativeDllException($"Could not load DLL \"{dll.name}\" at path \"{dll.path}\".");
                     }
 
-                    return;
+                    return LoadTargetFunctionResult.DllLoadFailed;
                 }
                 else
                 {
@@ -544,24 +568,22 @@ namespace UnityNativeTool.Internal
                 IntPtr funcPtr = SysGetDllProcAddress(dll.handle, nativeFunction.identity.symbol);
                 if (funcPtr == IntPtr.Zero)
                 {
+                    dll.symbolError = true;
                     if (!ignoreLoadError)
                     {
-                        dll.symbolError = true;
 #if UNITY_EDITOR
                         DispatchOnMainThread(() => { EditorApplication.isPaused = true; });
 #endif
                         throw new NativeDllException($"Could not get address of symbol \"{nativeFunction.identity.symbol}\" in DLL \"{dll.name}\" at path \"{dll.path}\".");
                     }
 
-                    return;
-                }
-                else
-                {
-                    dll.symbolError = false;
+                    return LoadTargetFunctionResult.SymbolResolutionFailed;
                 }
 
                 nativeFunction.@delegate = Marshal.GetDelegateForFunctionPointer(funcPtr, nativeFunction.delegateType);
             }
+
+            return LoadTargetFunctionResult.Success;
         }
 
         private static void InvokeCustomTriggers(List<Tuple<MethodInfo, bool>> triggers, NativeDll dll)
@@ -775,6 +797,7 @@ namespace UnityNativeTool.Internal
     public enum DllLoadingMode
     {
         Lazy,
-        Preload
+        Preload,
+        PreloadWarnUnresolved,
     }
 }
